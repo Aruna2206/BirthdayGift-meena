@@ -16,8 +16,13 @@ load_dotenv()
 app = FastAPI(title="Romantic Birthday Website API")
 
 # Setup CORS so the frontend can easily communicate
-allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+# Added the production origins jaso-023.vercel.app and jaso-23.vercel.app
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,https://jaso-023.vercel.app,https://jaso-23.vercel.app")
 origins = [origin.strip() for origin in allowed_origins_env.split(",")]
+if "*" in origins:
+    # If * is present, we handle it specially if credentials are needed
+    # but for simplicity, we'll just allow all for now if * is in env
+    pass
 
 app.add_middleware(
     CORSMiddleware,
@@ -88,19 +93,30 @@ async def upload_image(
 ):
     """Upload an image file and save its details to the database."""
     import uuid
-    import shutil
+    import base64
     
-    # Generate unique filename to prevent collisions
-    file_extension = file.filename.split(".")[-1]
-    filename = f"{uuid.uuid4()}.{file_extension}"
-    file_path = f"{IMAGES_FOLDER}/{filename}"
+    # Read file content
+    file_content = await file.read()
     
-    # Save the file to the local directory
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    # Check if we should use Base64 (recommended for Vercel/Serverless)
+    # or local storage (works only on local machines with persistent disk)
+    USE_BASE64 = os.getenv("USE_BASE64", "true").lower() == "true" or os.getenv("VERCEL") == "1"
+    
+    if USE_BASE64:
+        # Convert to base64
+        encoded_string = base64.b64encode(file_content).decode("utf-8")
+        image_url = f"data:{file.content_type};base64,{encoded_string}"
+    else:
+        # Save the file to the local directory (Fallback for local dev)
+        file_extension = file.filename.split(".")[-1]
+        filename = f"{uuid.uuid4()}.{file_extension}"
+        file_path = f"{IMAGES_FOLDER}/{filename}"
+        
+        with open(file_path, "wb") as buffer:
+            buffer.write(file_content)
+        image_url = f"/static/{filename}"
         
     # Create the db record
-    image_url = f"/static/{filename}"
     db_image = models.Image(
         title=title,
         description=description,
@@ -111,7 +127,6 @@ async def upload_image(
         is_special=is_special
     )
     await db_image.insert()
-    # Explicitly convert to dict and stringify id for serialization
     return {**db_image.dict(), "id": str(db_image.id)}
 
 
@@ -128,21 +143,26 @@ async def upload_multiple_images(
 ):
     """Upload multiple image files and save their details to the database."""
     import uuid
-    import shutil
+    import base64
     
     uploaded_images = []
+    USE_BASE64 = os.getenv("USE_BASE64", "true").lower() == "true" or os.getenv("VERCEL") == "1"
+    
     for file in files:
-        # Generate unique filename to prevent collisions
-        file_extension = file.filename.split(".")[-1]
-        filename = f"{uuid.uuid4()}.{file_extension}"
-        file_path = f"{IMAGES_FOLDER}/{filename}"
+        file_content = await file.read()
         
-        # Save the file to the local directory
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        if USE_BASE64:
+            encoded_string = base64.b64encode(file_content).decode("utf-8")
+            image_url = f"data:{file.content_type};base64,{encoded_string}"
+        else:
+            file_extension = file.filename.split(".")[-1]
+            filename = f"{uuid.uuid4()}.{file_extension}"
+            file_path = f"{IMAGES_FOLDER}/{filename}"
+            with open(file_path, "wb") as buffer:
+                buffer.write(file_content)
+            image_url = f"/static/{filename}"
             
         # Create the db record
-        image_url = f"/static/{filename}"
         db_image = models.Image(
             title=title if title else file.filename,
             description=description if description else "Bulk upload",
