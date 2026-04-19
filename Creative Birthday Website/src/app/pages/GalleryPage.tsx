@@ -252,9 +252,9 @@ export function GalleryPage() {
                   </div>
                   <div className="mt-4 text-center px-2">
                     <p className="text-pink-500 font-bold text-lg truncate">{photo.title}</p>
-                    {photo.description && (
+                    {/* {photo.description && (
                       <p className="text-pink-500/80 text-xs font-medium line-clamp-1 mt-1">{photo.description}</p>
-                    )}
+                    )} */}
                     {photo.category && (
                       <span className="inline-block mt-2 px-2 py-0.5 bg-pink-100 text-pink-500 text-[10px] font-bold rounded-full uppercase tracking-wider">
                          {photo.category}
