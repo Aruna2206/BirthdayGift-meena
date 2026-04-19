@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form
+from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,8 +37,27 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IMAGES_FOLDER = os.path.join(BASE_DIR, "static")
 os.makedirs(IMAGES_FOLDER, exist_ok=True)
 
-# Mount the static folder at /static route
-app.mount("/static", StaticFiles(directory=IMAGES_FOLDER), name="static")
+# Custom route to serve images from Database (for Vercel) or Local File (for Local)
+@app.get("/static/{filename}")
+async def serve_static_image(filename: str):
+    # Try to finding in DB first (For files uploaded while live on Vercel)
+    db_image = await models.Image.find_one(models.Image.filename == filename)
+    
+    import mimetypes
+    content_type, _ = mimetypes.guess_type(filename)
+    content_type = content_type or "image/jpeg"
+
+    if db_image and db_image.content:
+        return Response(content=db_image.content, media_type=content_type)
+    
+    # Fallback: check if the file exists in the physical static folder
+    # (For files that were pushed to GitHub inside the static folder)
+    local_path = os.path.join(IMAGES_FOLDER, filename)
+    if os.path.exists(local_path):
+        from fastapi.responses import FileResponse
+        return FileResponse(local_path)
+    
+    raise HTTPException(status_code=404, detail="Image not found")
 
 @app.on_event("startup")
 async def startup_event():
@@ -95,30 +114,29 @@ async def upload_image(
     import uuid
     import shutil
     
-    # Generate unique filename to prevent collisions
+    # Generate unique filename
     file_extension = file.filename.split(".")[-1]
     filename = f"{uuid.uuid4()}.{file_extension}"
     file_path = f"{IMAGES_FOLDER}/{filename}"
     
-    # Save the file to the local directory
-    # NOTE: This will fail on Vercel because it's a read-only filesystem.
-    # For live uploads on Vercel, you should use Cloudinary or similar.
+    # Read content once for both storage methods
+    file_content = await file.read()
+    
+    # Method 1: Save to local filesystem (Will work locally, will be skipped on Vercel gracefully)
     try:
         with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            buffer.write(file_content)
     except Exception as e:
-        print(f"Error saving file: {e}")
-        raise HTTPException(
-            status_code=500, 
-            detail="Failed to save image. Vercel's filesystem is read-only. Please use Cloudinary for live uploads."
-        )
-        
-    # Create the db record
+        print(f"Skipping local file save (expected on Vercel): {e}")
+
+    # Method 2: Save to Database (Works on Vercel and keeps files permanent!)
     image_url = f"/static/{filename}"
     db_image = models.Image(
         title=title,
         description=description,
         url=image_url,
+        filename=filename,
+        content=file_content,
         page=page,
         category=category,
         is_favorite=is_favorite,
@@ -146,29 +164,27 @@ async def upload_multiple_images(
     uploaded_images = []
     
     for file in files:
-        # Generate unique filename to prevent collisions
         file_extension = file.filename.split(".")[-1]
         filename = f"{uuid.uuid4()}.{file_extension}"
         file_path = f"{IMAGES_FOLDER}/{filename}"
         
-        # Save the file to the local directory
-        # NOTE: This will fail on Vercel because it's a read-only filesystem.
+        file_content = await file.read()
+        
+        # Save to local filesystem if possible
         try:
             with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+                buffer.write(file_content)
         except Exception as e:
-            print(f"Error saving file: {e}")
-            raise HTTPException(
-                status_code=500, 
-                detail="Failed to save image. Vercel's filesystem is read-only. Please use Cloudinary for live uploads."
-            )
+             print(f"Skipping local file save: {e}")
             
-        # Create the db record
+        # Create the db record with content
         image_url = f"/static/{filename}"
         db_image = models.Image(
             title=title if title else file.filename,
             description=description if description else "Bulk upload",
             url=image_url,
+            filename=filename,
+            content=file_content,
             page=page,
             category=category,
             is_favorite=is_favorite,
