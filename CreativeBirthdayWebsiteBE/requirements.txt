@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+beanie
+motor
+pydantic
+python-multipart
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt
+python-dotenv
+dnspython
