@@ -93,30 +93,28 @@ async def upload_image(
 ):
     """Upload an image file and save its details to the database."""
     import uuid
-    import base64
+    import shutil
     
-    # Read file content
-    file_content = await file.read()
+    # Generate unique filename to prevent collisions
+    file_extension = file.filename.split(".")[-1]
+    filename = f"{uuid.uuid4()}.{file_extension}"
+    file_path = f"{IMAGES_FOLDER}/{filename}"
     
-    # Check if we should use Base64 (recommended for Vercel/Serverless)
-    # or local storage (works only on local machines with persistent disk)
-    USE_BASE64 = os.getenv("USE_BASE64", "true").lower() == "true" or os.getenv("VERCEL") == "1"
-    
-    if USE_BASE64:
-        # Convert to base64
-        encoded_string = base64.b64encode(file_content).decode("utf-8")
-        image_url = f"data:{file.content_type};base64,{encoded_string}"
-    else:
-        # Save the file to the local directory (Fallback for local dev)
-        file_extension = file.filename.split(".")[-1]
-        filename = f"{uuid.uuid4()}.{file_extension}"
-        file_path = f"{IMAGES_FOLDER}/{filename}"
-        
+    # Save the file to the local directory
+    # NOTE: This will fail on Vercel because it's a read-only filesystem.
+    # For live uploads on Vercel, you should use Cloudinary or similar.
+    try:
         with open(file_path, "wb") as buffer:
-            buffer.write(file_content)
-        image_url = f"/static/{filename}"
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as e:
+        print(f"Error saving file: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Failed to save image. Vercel's filesystem is read-only. Please use Cloudinary for live uploads."
+        )
         
     # Create the db record
+    image_url = f"/static/{filename}"
     db_image = models.Image(
         title=title,
         description=description,
@@ -143,26 +141,30 @@ async def upload_multiple_images(
 ):
     """Upload multiple image files and save their details to the database."""
     import uuid
-    import base64
+    import shutil
     
     uploaded_images = []
-    USE_BASE64 = os.getenv("USE_BASE64", "true").lower() == "true" or os.getenv("VERCEL") == "1"
     
     for file in files:
-        file_content = await file.read()
+        # Generate unique filename to prevent collisions
+        file_extension = file.filename.split(".")[-1]
+        filename = f"{uuid.uuid4()}.{file_extension}"
+        file_path = f"{IMAGES_FOLDER}/{filename}"
         
-        if USE_BASE64:
-            encoded_string = base64.b64encode(file_content).decode("utf-8")
-            image_url = f"data:{file.content_type};base64,{encoded_string}"
-        else:
-            file_extension = file.filename.split(".")[-1]
-            filename = f"{uuid.uuid4()}.{file_extension}"
-            file_path = f"{IMAGES_FOLDER}/{filename}"
+        # Save the file to the local directory
+        # NOTE: This will fail on Vercel because it's a read-only filesystem.
+        try:
             with open(file_path, "wb") as buffer:
-                buffer.write(file_content)
-            image_url = f"/static/{filename}"
+                shutil.copyfileobj(file.file, buffer)
+        except Exception as e:
+            print(f"Error saving file: {e}")
+            raise HTTPException(
+                status_code=500, 
+                detail="Failed to save image. Vercel's filesystem is read-only. Please use Cloudinary for live uploads."
+            )
             
         # Create the db record
+        image_url = f"/static/{filename}"
         db_image = models.Image(
             title=title if title else file.filename,
             description=description if description else "Bulk upload",
